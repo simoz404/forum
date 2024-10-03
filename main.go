@@ -9,7 +9,9 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/mattn/go-sqlite3"
 	_ "github.com/mattn/go-sqlite3"
+	"golang.org/x/crypto/bcrypt"
 )
 
 var db *sql.DB
@@ -27,7 +29,7 @@ func main() {
 	http.HandleFunc("/api/users", usersHandler)
 	// // Set up routes
 	// http.HandleFunc("/", homehandler)
-	// http.HandleFunc("/register", registerHandler)
+	http.HandleFunc("/register", registerHandler)
 	// http.HandleFunc("/login", loginHandler)
 	// http.HandleFunc("/logout", logoutHandler)
 	// http.HandleFunc("/posts", postsHandler)
@@ -115,53 +117,71 @@ type user struct {
 	Password  string    `json:"-"` // Use "-" to exclude from JSON output
 	CreatedAt time.Time `json:"created_at"`
 }
+func registerHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
+		return
+	}
 
-// func registerHandler(w http.ResponseWriter, r *http.Request) {
-// 	if r.Method != http.MethodPost {
-// 		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
-// 		return
-// 	}
+	var newUser user
+	err := json.NewDecoder(r.Body).Decode(&newUser)
+	if err != nil {
+		log.Printf("Error decoding JSON: %v", err) // Log the error for debugging
+		http.Error(w, "Bad request", http.StatusBadRequest)
+		return
+	}
 
-// 	newUser := user{
-// 		username: r.FormValue("username"),
-// 		email:    r.FormValue("email"),
-// 		password: r.FormValue("password"),
-// 	}
+	// Hash the password
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newUser.Password), bcrypt.DefaultCost)
+	if err != nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	newUser.Password = string(hashedPassword)
 
-// 	_, err := db.Exec("INSERT INTO users (username, email, password) VALUES (?, ?, ?)", newUser.username, newUser.email, newUser.password)
-// 	if err != nil {
-// 		log.Printf("Error inserting user: %v", err)
-// 		http.Error(w, "Internal server error", http.StatusInternalServerError)
-// 		return
-// 	}
+	// Insert the new user into the database
+	_, err = db.Exec("INSERT INTO users (username, email, password) VALUES (?, ?, ?)",
+		newUser.Username, newUser.Email, newUser.Password)
+	if err != nil {
+		if sqliteErr, ok := err.(*sqlite3.Error); ok && sqliteErr.Code == sqlite3.ErrConstraint {
+			http.Error(w, "Username or email already exists", http.StatusConflict)
+		} else {
+			log.Printf("Error inserting user: %v", err)
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+		}
+		return
+	}
 
-// 	http.Redirect(w, r, "/", http.StatusSeeOther)
-// }
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(newUser)
+}
+
 
 func getUsersHandler(w http.ResponseWriter, r *http.Request) {
-    users := []user{}
-    rows, err := db.Query("SELECT id, username, email, password, created_at FROM users")
-    if err != nil {
-        http.Error(w, err.Error(), http.StatusInternalServerError)
-        return
-    }
-    defer rows.Close()
+	users := []user{}
+	rows, err := db.Query("SELECT id, username, email, password, created_at FROM users")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
 
-    for rows.Next() {
-        var u user
-        if err := rows.Scan(&u.ID, &u.Username, &u.Email, &u.Password, &u.CreatedAt); err != nil {
-            http.Error(w, err.Error(), http.StatusInternalServerError)
-            return
-        }
-        users = append(users, u)
-    }
+	for rows.Next() {
+		var u user
+		if err := rows.Scan(&u.ID, &u.Username, &u.Email, &u.Password, &u.CreatedAt); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		users = append(users, u)
+	}
 
-    w.Header().Set("Content-Type", "application/json")
-    if err := json.NewEncoder(w).Encode(users); err != nil {
-        http.Error(w, err.Error(), http.StatusInternalServerError)
-        return
-    }
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(users); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 }
+
 func usersHandler(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
