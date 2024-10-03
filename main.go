@@ -2,9 +2,12 @@ package main
 
 import (
 	"database/sql"
+	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"text/template"
+	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -21,17 +24,17 @@ func main() {
 
 	// Initialize database tables
 	initDB(db)
-
-	// Set up routes
-	http.HandleFunc("/", homehandler)
-	http.HandleFunc("/register", registerHandler)
-	http.HandleFunc("/login", loginHandler)
-	http.HandleFunc("/logout", logoutHandler)
-	http.HandleFunc("/posts", postsHandler)
-	http.HandleFunc("/posts/new", newPostHandler)
-	http.HandleFunc("/comments", commentsHandler)
-	http.HandleFunc("/like", likeHandler)
-
+	http.HandleFunc("/api/users", usersHandler)
+	// // Set up routes
+	// http.HandleFunc("/", homehandler)
+	// http.HandleFunc("/register", registerHandler)
+	// http.HandleFunc("/login", loginHandler)
+	// http.HandleFunc("/logout", logoutHandler)
+	// http.HandleFunc("/posts", postsHandler)
+	// http.HandleFunc("/posts/new", newPostHandler)
+	// http.HandleFunc("/comments", commentsHandler)
+	// http.HandleFunc("/like", likeHandler)
+	fmt.Println("server runnig on port 8080")
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
 
@@ -42,6 +45,7 @@ func homehandler(w http.ResponseWriter, r *http.Request) {
 	}
 	tmp.Execute(w, nil)
 }
+
 func initDB(db *sql.DB) {
 	// SQL statements to create tables
 	tables := []string{`
@@ -105,33 +109,68 @@ func initDB(db *sql.DB) {
 }
 
 type user struct {
-	id       int
-	username string
-	email    string
-	password string
+	ID        int       `json:"id"`
+	Username  string    `json:"username"`
+	Email     string    `json:"email"`
+	Password  string    `json:"-"` // Use "-" to exclude from JSON output
+	CreatedAt time.Time `json:"created_at"`
 }
 
-func registerHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
-		return
-	}
+// func registerHandler(w http.ResponseWriter, r *http.Request) {
+// 	if r.Method != http.MethodPost {
+// 		http.Error(w, "Invalid request method", http.StatusMethodNotAllowed)
+// 		return
+// 	}
 
-	newUser := user{
-		username: r.FormValue("username"),
-		email:    r.FormValue("email"),
-		password: r.FormValue("password"),
-	}
+// 	newUser := user{
+// 		username: r.FormValue("username"),
+// 		email:    r.FormValue("email"),
+// 		password: r.FormValue("password"),
+// 	}
 
-	_, err := db.Exec("INSERT INTO users (username, email, password) VALUES (?, ?, ?)", newUser.username, newUser.email, newUser.password)
-	if err != nil {
-		log.Printf("Error inserting user: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
+// 	_, err := db.Exec("INSERT INTO users (username, email, password) VALUES (?, ?, ?)", newUser.username, newUser.email, newUser.password)
+// 	if err != nil {
+// 		log.Printf("Error inserting user: %v", err)
+// 		http.Error(w, "Internal server error", http.StatusInternalServerError)
+// 		return
+// 	}
 
-	http.Redirect(w, r, "/", http.StatusSeeOther)
+// 	http.Redirect(w, r, "/", http.StatusSeeOther)
+// }
+
+func getUsersHandler(w http.ResponseWriter, r *http.Request) {
+    users := []user{}
+    rows, err := db.Query("SELECT id, username, email, password, created_at FROM users")
+    if err != nil {
+        http.Error(w, err.Error(), http.StatusInternalServerError)
+        return
+    }
+    defer rows.Close()
+
+    for rows.Next() {
+        var u user
+        if err := rows.Scan(&u.ID, &u.Username, &u.Email, &u.Password, &u.CreatedAt); err != nil {
+            http.Error(w, err.Error(), http.StatusInternalServerError)
+            return
+        }
+        users = append(users, u)
+    }
+
+    w.Header().Set("Content-Type", "application/json")
+    if err := json.NewEncoder(w).Encode(users); err != nil {
+        http.Error(w, err.Error(), http.StatusInternalServerError)
+        return
+    }
 }
+func usersHandler(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		getUsersHandler(w, r)
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
 func loginHandler(w http.ResponseWriter, r *http.Request) {
 	// Implement user login
 }
